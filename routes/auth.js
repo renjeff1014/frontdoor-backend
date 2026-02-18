@@ -2,7 +2,7 @@ const express = require('express')
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const crypto = require('crypto')
-const { getOrCreateUser, getUserByEmail, updatePassword, saveResetToken, getResetToken } = require('../store/users')
+const { getOrCreateUser, getUserByEmail, updatePassword, saveResetToken, getResetToken, deleteResetToken } = require('../store/users')
 
 const router = express.Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production'
@@ -18,13 +18,13 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters.' })
     }
 
-    const existing = getUserByEmail(email)
+    const existing = await getUserByEmail(email)
     if (existing) {
       return res.status(409).json({ error: 'An account with this email already exists.' })
     }
 
     const hashed = await bcrypt.hash(password, 10)
-    const user = getOrCreateUser(email, hashed)
+    const user = await getOrCreateUser(email, hashed)
     const token = jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: '7d' })
 
     res.status(201).json({
@@ -45,7 +45,7 @@ router.post('/signin', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required.' })
     }
 
-    const user = getUserByEmail(email)
+    const user = await getUserByEmail(email)
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password.' })
     }
@@ -68,17 +68,17 @@ router.post('/signin', async (req, res) => {
 })
 
 // POST /auth/forgot-password
-router.post('/forgot-password', (req, res) => {
+router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body
     if (!email) {
       return res.status(400).json({ error: 'Email is required.' })
     }
 
-    const user = getUserByEmail(email)
+    const user = await getUserByEmail(email)
     if (user) {
       const token = crypto.randomBytes(32).toString('hex')
-      saveResetToken(email, token)
+      await saveResetToken(email, token)
       // In production: send email with link containing token
       // e.g. https://yoursite.com/reset-password?token=...
       console.log(`[Dev] Reset token for ${email}: ${token}`)
@@ -103,14 +103,14 @@ router.post('/reset-password', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters.' })
     }
 
-    const email = getResetToken(token)
+    const email = await getResetToken(token)
     if (!email) {
       return res.status(400).json({ error: 'Invalid or expired reset token.' })
     }
 
     const hashed = await bcrypt.hash(newPassword, 10)
-    updatePassword(email, hashed)
-    // In production: invalidate token after use
+    await updatePassword(email, hashed)
+    await deleteResetToken(token)
 
     res.json({ message: 'Password has been reset. You can sign in with your new password.' })
   } catch (err) {
