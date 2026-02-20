@@ -2,6 +2,7 @@ const express = require('express')
 const jwt = require('jsonwebtoken')
 const { getRequestsForUser, listRequestsForUser, getRequestById, addReplyToRequest, setRequestClosed } = require('../store/requests')
 const { getUserWindows } = require('../store/users')
+const { getContactNameByFrom } = require('../store/contacts')
 
 const router = express.Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production'
@@ -28,7 +29,8 @@ router.get('/:id', requireAuth, async (req, res) => {
     if (!request) {
       return res.status(404).json({ error: 'Request not found.' })
     }
-    res.json(request)
+    const displayFrom = await getContactNameByFrom(req.userId, request.from)
+    res.json({ ...request, from: displayFrom ?? request.from, isInContact: !!displayFrom })
   } catch (err) {
     console.error('GET /requests/:id error:', err)
     res.status(500).json({ error: 'Failed to fetch request.' })
@@ -74,7 +76,13 @@ router.get('/', requireAuth, async (req, res) => {
       getUserWindows(req.userId),
       listRequestsForUser(req.userId),
     ])
-    res.json({ queueSummary, windows, requests })
+    const resolvedRequests = await Promise.all(
+      requests.map(async (r) => {
+        const displayFrom = await getContactNameByFrom(req.userId, r.from)
+        return { ...r, from: displayFrom ?? r.from, isInContact: !!displayFrom }
+      })
+    )
+    res.json({ queueSummary, windows, requests: resolvedRequests })
   } catch (err) {
     console.error('GET /requests error:', err)
     res.status(500).json({ error: 'Failed to fetch requests.' })

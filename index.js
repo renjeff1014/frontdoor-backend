@@ -7,6 +7,7 @@ const authRoutes = require('./routes/auth')
 const usersRoutes = require('./routes/users')
 const pingerRoutes = require('./routes/pinger')
 const requestsRoutes = require('./routes/requests')
+const contactsRoutes = require('./routes/contacts')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -18,6 +19,7 @@ app.use('/auth', authRoutes)
 app.use('/users', usersRoutes)
 app.use('/pinger', pingerRoutes)
 app.use('/requests', requestsRoutes)
+app.use('/contacts', contactsRoutes)
 
 app.get('/health', (req, res) => {
   res.json({ ok: true })
