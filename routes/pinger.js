@@ -1,7 +1,7 @@
 const express = require('express')
 const { getUserByLinkSlug, getUserIdAndVerifiedByLinkSlug } = require('../store/users')
 const { setCode, getAndConsumeCode } = require('../store/verification')
-const { createRequest } = require('../store/requests')
+const { createRequest, getRequestStatusPublic } = require('../store/requests')
 const { sendVerificationCode } = require('../lib/mail')
 
 const router = express.Router()
@@ -33,9 +33,6 @@ router.get('/require-verification', async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: 'Not found' })
     }
-    if (!user.verified_only) {
-      return res.status(400).json({ error: 'Verification not required for this user.' })
-    }
     const code = setCode(pingeeId, contact)
     const contactTrimmed = String(contact).trim()
     const isEmail = contactTrimmed.includes('@')
@@ -61,6 +58,7 @@ router.post('/request/:pingeeId', async (req, res) => {
   try {
     const { pingeeId } = req.params
     const code = req.query.code
+    const isVerification = req.query.isVerification
     const { purpose, message, contact } = req.body || {}
     const user = await getUserIdAndVerifiedByLinkSlug(pingeeId)
     if (!user) {
@@ -75,7 +73,7 @@ router.post('/request/:pingeeId', async (req, res) => {
     if (user.verified_only && !fromContact) {
       return res.status(400).json({ error: 'contact is required when verification is required.' })
     }
-    if (user.verified_only) {
+    if (isVerification) {
       if (!code) {
         return res.status(400).json({ error: 'Verification code is required.' })
       }
@@ -83,15 +81,29 @@ router.post('/request/:pingeeId', async (req, res) => {
       if (!valid) {
         return res.status(400).json({ error: 'Invalid or expired code.' })
       }
-      await createRequest(user.userId, fromContact, purpose, message, true)
-      return res.status(200).json({ success: true })
+      const requestId = await createRequest(user.userId, fromContact, purpose, message, true)
+      return res.status(200).json({ success: true, requestId })
     }
     // verified_only false: no code
-    await createRequest(user.userId, fromContact, purpose, message, false)
-    res.status(200).json({ success: true })
+    const requestId = await createRequest(user.userId, fromContact, purpose, message, false)
+    res.status(200).json({ success: true, requestId })
   } catch (err) {
     console.error('Pinger request error:', err)
     res.status(500).json({ error: 'Failed to submit request.' })
+  }
+})
+
+// GET /pinger/status/:requestId — public: get request status for status page (no auth)
+router.get('/status/:requestId', async (req, res) => {
+  try {
+    const request = await getRequestStatusPublic(req.params.requestId)
+    if (!request) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+    res.status(200).json(request)
+  } catch (err) {
+    console.error('Pinger status error:', err)
+    res.status(500).json({ error: 'Failed to load status.' })
   }
 })
 

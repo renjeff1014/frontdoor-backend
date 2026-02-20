@@ -19,11 +19,12 @@ async function createRequest(toUserId, fromContact, purposeTypeLabel, message, i
   if (!fromVal) {
     throw new Error('Contact is required')
   }
+  const statusJson = JSON.stringify({ received: true })
   const { rows } = await query(
-    `INSERT INTO requests ("from", "to", type, is_verified, message)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO requests ("from", "to", type, is_verified, message, status)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
      RETURNING id`,
-    [fromVal, toUserId, typeId, Boolean(isVerified), message || null]
+    [fromVal, toUserId, typeId, Boolean(isVerified), message || null, statusJson]
   )
   return rows[0].id
 }
@@ -55,7 +56,7 @@ async function getRequestsForUser(userId) {
 
 async function getRequestById(userId, requestId) {
   const { rows } = await query(
-    `SELECT r.id, r."from", r.received, r.message, r.attachment, r.is_verified, rt.type
+    `SELECT r.id, r."from", r.received, r.message, r.attachment, r.is_verified, r.reply, r.status, rt.type
      FROM requests r
      JOIN request_types rt ON rt.id = r.type
      WHERE r.id = $1 AND r."to" = $2`,
@@ -63,6 +64,13 @@ async function getRequestById(userId, requestId) {
   )
   const row = rows[0]
   if (!row) return null
+
+  await query(
+    `UPDATE requests SET status = jsonb_set(COALESCE(status, '{}'::jsonb), '{inreply}', 'true')
+     WHERE id = $1 AND "to" = $2`,
+    [requestId, userId]
+  )
+
   let attachments = []
   if (row.attachment) {
     try {
@@ -72,6 +80,17 @@ async function getRequestById(userId, requestId) {
       attachments = [{ name: String(row.attachment) }]
     }
   }
+
+  let replyList = []
+  if (row.reply) {
+    try {
+      const parsed = typeof row.reply === 'string' ? JSON.parse(row.reply) : row.reply
+      replyList = Array.isArray(parsed) ? parsed : []
+    } catch {
+      replyList = []
+    }
+  }
+
   return {
     id: row.id,
     from: row.from,
@@ -81,7 +100,70 @@ async function getRequestById(userId, requestId) {
     isVerified: Boolean(row.is_verified),
     attachment: row.attachment,
     attachments,
+    reply: replyList,
   }
+}
+
+/**
+ * Public fetch of request status by id (for pinger status page, no auth).
+ * Returns type, received timestamp, and status flags.
+ */
+async function getRequestStatusPublic(requestId) {
+  if (!requestId) return null
+  const { rows } = await query(
+    `SELECT r.id, r.received, r.status, rt.type
+     FROM requests r
+     JOIN request_types rt ON rt.id = r.type
+     WHERE r.id = $1`,
+    [requestId]
+  )
+  const row = rows[0]
+  if (!row) return null
+  const status = row.status && typeof row.status === 'object'
+    ? row.status
+    : typeof row.status === 'string'
+      ? (() => { try { return JSON.parse(row.status) } catch { return {} } })()
+      : {}
+  return {
+    id: row.id,
+    type: row.type,
+    received: row.received,
+    status: {
+      received: Boolean(status.received),
+      inreply: Boolean(status.inreply),
+      replied: Boolean(status.replied),
+      closed: Boolean(status.closed),
+    },
+  }
+}
+
+/**
+ * Append a reply to the request and set status.replied = true.
+ */
+async function addReplyToRequest(userId, requestId, replyText) {
+  const text = String(replyText || '').trim()
+  if (!text) throw new Error('Reply text is required')
+  const { rowCount } = await query(
+    `UPDATE requests
+     SET reply = COALESCE(reply, '[]'::jsonb) || jsonb_build_array($2::text),
+         status = jsonb_set(COALESCE(status, '{}'::jsonb), '{replied}', 'true')
+     WHERE id = $1 AND "to" = $3`,
+    [requestId, text, userId]
+  )
+  return rowCount > 0
+}
+
+/**
+ * Set request status.closed = true.
+ */
+async function setRequestClosed(userId, requestId) {
+  const { rowCount } = await query(
+    `UPDATE requests
+     SET status = jsonb_set(COALESCE(status, '{}'::jsonb), '{closed}', 'true')
+     WHERE id = $1 AND "to" = $2`,
+    [requestId, userId]
+  )
+  return rowCount > 0
 }
 
 async function listRequestsForUser(userId) {
@@ -105,7 +187,10 @@ async function listRequestsForUser(userId) {
 module.exports = {
   getRequestTypeIdByType,
   createRequest,
+  getRequestStatusPublic,
   getRequestsForUser,
   listRequestsForUser,
   getRequestById,
+  addReplyToRequest,
+  setRequestClosed,
 }

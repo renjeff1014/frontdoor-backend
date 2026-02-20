@@ -1,6 +1,6 @@
 const express = require('express')
 const jwt = require('jsonwebtoken')
-const { getRequestsForUser, listRequestsForUser, getRequestById } = require('../store/requests')
+const { getRequestsForUser, listRequestsForUser, getRequestById, addReplyToRequest, setRequestClosed } = require('../store/requests')
 const { getUserWindows } = require('../store/users')
 
 const router = express.Router()
@@ -32,6 +32,37 @@ router.get('/:id', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('GET /requests/:id error:', err)
     res.status(500).json({ error: 'Failed to fetch request.' })
+  }
+})
+
+// POST /requests/:id/reply — add a reply and set status.replied = true
+router.post('/:id/reply', requireAuth, async (req, res) => {
+  try {
+    const requestId = req.params.id
+    const replyText = req.body?.reply != null ? String(req.body.reply) : ''
+    const ok = await addReplyToRequest(req.userId, requestId, replyText)
+    if (!ok) {
+      return res.status(404).json({ error: 'Request not found.' })
+    }
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('POST /requests/:id/reply error:', err)
+    res.status(400).json({ error: err.message || 'Failed to add reply.' })
+  }
+})
+
+// POST /requests/:id/archive — set status.closed = true
+router.post('/:id/archive', requireAuth, async (req, res) => {
+  try {
+    const requestId = req.params.id
+    const ok = await setRequestClosed(req.userId, requestId)
+    if (!ok) {
+      return res.status(404).json({ error: 'Request not found.' })
+    }
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('POST /requests/:id/archive error:', err)
+    res.status(500).json({ error: 'Failed to archive.' })
   }
 })
 
